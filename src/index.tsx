@@ -241,7 +241,7 @@ function generateSyntheticData(): string {
   const randomChoice = <T,>(arr: T[]): T => arr[Math.floor(random() * arr.length)]!;
 
   const lines: string[] = [];
-  lines.push('Date\tMerchant\tCategory\tAccount\tOriginal Statement\tNotes\tAmount\tTags\tOwner\tFixedCategory\tMonth');
+  lines.push('Date\tMerchant\tCategory\tAccount\tOriginal Statement\tNotes\tAmount\tTags\tOwner');
 
   for (let month = 1; month <= 12; month++) {
     for (const category of categories) {
@@ -256,9 +256,8 @@ function generateSyntheticData(): string {
         const account = randomChoice(accounts);
         const owner = randomChoice(owners);
         const amount = -(randomInt(minAmount * 100, maxAmount * 100) / 100);
-        const monthStr = `2025-${String(month).padStart(2, '0')}`;
 
-        lines.push(`${date}\t${merchant.name}\t${category}\t${account}\t${merchant.statement}\t\t${amount.toFixed(2)}\t\t${owner}\t${category}\t${monthStr}`);
+        lines.push(`${date}\t${merchant.name}\t${category}\t${account}\t${merchant.statement}\t\t${amount.toFixed(2)}\t\t${owner}`);
       }
     }
   }
@@ -342,7 +341,7 @@ function pivotData(transactions: Transaction[], year: number): PivotData {
     const ym = getYearMonth(t.date);
     if (!ym || ym.year !== year) continue;
 
-    const category = t.fixedCategory || 'Uncategorized';
+    const category = t.fixedCategory || t.category || 'Uncategorized';
     if (!pivot[category]) {
       pivot[category] = {};
     }
@@ -380,7 +379,7 @@ function calculateStats(monthlyData: { [month: number]: number }): { total: numb
 function getTransactionsForCell(transactions: Transaction[], category: string, year: number, month: number): Transaction[] {
   return transactions.filter(t => {
     const ym = getYearMonth(t.date);
-    return ym && ym.year === year && ym.month === month && (t.fixedCategory || 'Uncategorized') === category;
+    return ym && ym.year === year && ym.month === month && (t.fixedCategory || t.category || 'Uncategorized') === category;
   });
 }
 
