@@ -93,6 +93,28 @@
     .transactions td:last-child {
       text-align: right;
     }
+    .transactions th.sortable {
+      cursor: pointer;
+      user-select: none;
+    }
+    .transactions th.sortable:hover {
+      background: #e9ecef;
+    }
+    .transactions tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .transactions td.truncate {
+      max-width: 150px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pivot-table td:first-child {
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   </style>
 </head>
 <body>

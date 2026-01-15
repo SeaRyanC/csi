@@ -27,6 +27,9 @@ interface CellSelection {
   year: number;
 }
 
+type SortColumn = 'date' | 'merchant' | 'category' | 'account' | 'originalStatement' | 'notes' | 'tags' | 'owner' | 'amount';
+type SortDirection = 'asc' | 'desc';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const STORAGE_KEY = 'csi-tsv-data';
 
@@ -41,7 +44,8 @@ function parseTSV(tsv: string): Transaction[] {
     if (!line?.trim()) continue;
 
     const cols = line.split('\t');
-    const amount = parseFloat(cols[6] ?? '0') || 0;
+    const rawAmount = parseFloat(cols[6] ?? '0') || 0;
+    const amount = -rawAmount; // Invert sign: treat negative as positive and vice versa
 
     transactions.push({
       date: cols[0] ?? '',
@@ -131,6 +135,8 @@ function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedCell, setSelectedCell] = useState<CellSelection | null>(null);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('amount');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -171,9 +177,29 @@ function App() {
     setSelectedCell({ category, month, year: selectedYear });
   };
 
-  const selectedTransactions = selectedCell
+  const handleSortClick = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection(column === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const filteredTransactions = selectedCell
     ? getTransactionsForCell(transactions, selectedCell.category, selectedCell.year, selectedCell.month)
     : [];
+
+  const selectedTransactions = [...filteredTransactions].sort((a, b) => {
+    const aVal = a[sortColumn];
+    const bVal = b[sortColumn];
+    const multiplier = sortDirection === 'asc' ? 1 : -1;
+
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return (aVal - bVal) * multiplier;
+    }
+    return String(aVal).localeCompare(String(bVal)) * multiplier;
+  });
 
   return (
     <div class="container">
@@ -209,7 +235,7 @@ function App() {
           </div>
 
           {selectedYear !== null && categories.length > 0 && (
-            <table>
+            <table class="pivot-table">
               <thead>
                 <tr>
                   <th>Category</th>
@@ -260,28 +286,46 @@ function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Merchant</th>
-                    <th>Category</th>
-                    <th>Account</th>
-                    <th>Original Statement</th>
-                    <th>Notes</th>
-                    <th>Tags</th>
-                    <th>Owner</th>
-                    <th>Amount</th>
+                    <th class="sortable" onClick={() => handleSortClick('date')}>
+                      Date {sortColumn === 'date' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('merchant')}>
+                      Merchant {sortColumn === 'merchant' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('category')}>
+                      Category {sortColumn === 'category' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('account')}>
+                      Account {sortColumn === 'account' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('originalStatement')}>
+                      Original Statement {sortColumn === 'originalStatement' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('notes')}>
+                      Notes {sortColumn === 'notes' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('tags')}>
+                      Tags {sortColumn === 'tags' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('owner')}>
+                      Owner {sortColumn === 'owner' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
+                    <th class="sortable" onClick={() => handleSortClick('amount')}>
+                      Amount {sortColumn === 'amount' ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {selectedTransactions.map((t, i) => (
                     <tr key={i}>
-                      <td>{t.date}</td>
-                      <td>{t.merchant}</td>
-                      <td>{t.category}</td>
-                      <td>{t.account}</td>
-                      <td>{t.originalStatement}</td>
-                      <td>{t.notes}</td>
-                      <td>{t.tags}</td>
-                      <td>{t.owner}</td>
+                      <td class="truncate" title={t.date}>{t.date}</td>
+                      <td title={t.merchant}>{t.merchant}</td>
+                      <td class="truncate" title={t.category}>{t.category}</td>
+                      <td class="truncate" title={t.account}>{t.account}</td>
+                      <td class="truncate" title={t.originalStatement}>{t.originalStatement}</td>
+                      <td class="truncate" title={t.notes}>{t.notes}</td>
+                      <td class="truncate" title={t.tags}>{t.tags}</td>
+                      <td class="truncate" title={t.owner}>{t.owner}</td>
                       <td>{formatCurrency(t.amount)}</td>
                     </tr>
                   ))}
