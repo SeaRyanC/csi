@@ -27,16 +27,267 @@ interface CellSelection {
   year: number;
 }
 
+interface ColumnMapping {
+  date: number;
+  merchant: number;
+  category: number;
+  account: number;
+  originalStatement: number;
+  notes: number;
+  amount: number;
+  tags: number;
+  owner: number;
+  fixedCategory: number;
+}
+
 type SortColumn = 'date' | 'merchant' | 'category' | 'account' | 'originalStatement' | 'notes' | 'tags' | 'owner' | 'amount';
 type SortDirection = 'asc' | 'desc';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const STORAGE_KEY = 'csi-tsv-data';
 
+// Column synonyms in priority order (first match wins)
+const COLUMN_SYNONYMS: { [key: string]: string[] } = {
+  date: ['date', 'transaction date', 'trans date', 'posted date', 'posting date', 'trans_date', 'txn date', 'txn_date'],
+  merchant: ['merchant', 'vendor', 'payee', 'description', 'merchant name', 'name', 'store'],
+  category: ['category', 'type', 'expense type', 'transaction type', 'trans type', 'spending category'],
+  account: ['account', 'account name', 'card', 'payment method', 'source', 'bank', 'credit card'],
+  originalStatement: ['original statement', 'statement', 'memo', 'original description', 'raw description', 'bank description'],
+  notes: ['notes', 'note', 'comments', 'comment', 'remarks', 'remark'],
+  amount: ['amount', 'total', 'sum', 'value', 'price', 'cost', 'transaction amount', 'trans amount'],
+  tags: ['tags', 'tag', 'labels', 'label'],
+  owner: ['owner', 'user', 'person', 'member', 'paid by', 'purchaser'],
+  fixedCategory: ['fixedcategory', 'fixed category', 'override category', 'corrected category', 'manual category'],
+};
+
+// Detect column indices from headers
+function detectColumnMapping(headers: string[]): ColumnMapping {
+  const normalizedHeaders = headers.map(h => h.toLowerCase().trim());
+  const mapping: Partial<ColumnMapping> = {};
+  const usedIndices = new Set<number>();
+
+  // For each field, find the best matching column
+  for (const [field, synonyms] of Object.entries(COLUMN_SYNONYMS)) {
+    // First check for "Fixed" prefix override
+    if (field !== 'fixedCategory') {
+      const fixedSynonyms = synonyms.map(s => `fixed${s}`).concat(synonyms.map(s => `fixed ${s}`));
+      for (const synonym of fixedSynonyms) {
+        const idx = normalizedHeaders.findIndex((h, i) => !usedIndices.has(i) && h === synonym);
+        if (idx !== -1) {
+          // This is the fixed version - store as fixedX field
+          const fixedField = `fixed${field.charAt(0).toUpperCase() + field.slice(1)}` as keyof ColumnMapping;
+          if (!(fixedField in mapping)) {
+            mapping[fixedField] = idx;
+            usedIndices.add(idx);
+          }
+        }
+      }
+    }
+
+    // Now look for the regular field
+    for (const synonym of synonyms) {
+      const idx = normalizedHeaders.findIndex((h, i) => !usedIndices.has(i) && h === synonym);
+      if (idx !== -1) {
+        mapping[field as keyof ColumnMapping] = idx;
+        usedIndices.add(idx);
+        break;
+      }
+    }
+  }
+
+  // Return mapping with -1 for missing fields
+  return {
+    date: mapping.date ?? -1,
+    merchant: mapping.merchant ?? -1,
+    category: mapping.category ?? -1,
+    account: mapping.account ?? -1,
+    originalStatement: mapping.originalStatement ?? -1,
+    notes: mapping.notes ?? -1,
+    amount: mapping.amount ?? -1,
+    tags: mapping.tags ?? -1,
+    owner: mapping.owner ?? -1,
+    fixedCategory: mapping.fixedCategory ?? -1,
+  };
+}
+
+// Parse a date string in various formats to extract year and month
+function parseDateString(dateStr: string): { year: number; month: number; day: number } | null {
+  const trimmed = dateStr.trim();
+  
+  // Try YYYY-MM-DD or YYYY/MM/DD
+  let match = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (match) {
+    return {
+      year: parseInt(match[1]!, 10),
+      month: parseInt(match[2]!, 10),
+      day: parseInt(match[3]!, 10),
+    };
+  }
+
+  // Try MM-DD-YYYY, MM/DD/YYYY, DD-MM-YYYY, or DD/MM/YYYY
+  // We prefer MM/DD/YYYY interpretation, but if first number > 12 and second <= 12, swap (European)
+  match = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (match) {
+    let first = parseInt(match[1]!, 10);
+    let second = parseInt(match[2]!, 10);
+    const year = parseInt(match[3]!, 10);
+    
+    // If first > 12 and second <= 12, assume European DD/MM/YYYY format
+    if (first > 12 && second <= 12) {
+      return { year, month: second, day: first };
+    }
+    // Otherwise assume MM/DD/YYYY
+    return { year, month: first, day: second };
+  }
+
+  return null;
+}
+
+// Detect sign convention: returns true if negative numbers should be inverted to positive (expenses)
+function detectSignConvention(amounts: number[]): boolean {
+  const negativeCount = amounts.filter(a => a < 0).length;
+  const positiveCount = amounts.filter(a => a > 0).length;
+  // If more negative than positive, assume negative = expense, so invert
+  return negativeCount > positiveCount;
+}
+
+// Generate synthetic data for pre-population
+function generateSyntheticData(): string {
+  const categories = ['Groceries', 'Restaurants', 'Transportation', 'Entertainment', 'Utilities', 'Shopping', 'Healthcare', 'Travel'];
+  const accounts = ['Platinum Card', 'Rewards Visa', 'Checking Account', 'Debit Card'];
+  const owners = ['Primary', 'Secondary', 'Shared'];
+  
+  const merchants: { [cat: string]: { name: string; statement: string }[] } = {
+    Groceries: [
+      { name: 'Fresh Mart', statement: 'FRESH MART #1234' },
+      { name: 'Green Valley Foods', statement: 'GREEN VALLEY FOODS' },
+      { name: 'City Grocery', statement: 'CITY GROCERY STORE' },
+      { name: 'Organic Market', statement: 'ORGANIC MKT LLC' },
+      { name: 'Corner Store', statement: 'CORNER STORE #567' },
+    ],
+    Restaurants: [
+      { name: 'Bella Italia', statement: 'BELLA ITALIA REST' },
+      { name: 'Golden Dragon', statement: 'GOLDEN DRAGON #42' },
+      { name: 'Burger Joint', statement: 'BURGER JOINT LLC' },
+      { name: 'Sushi Palace', statement: 'SUSHI PALACE' },
+      { name: 'Taco Express', statement: 'TACO EXPRESS #789' },
+    ],
+    Transportation: [
+      { name: 'Metro Transit', statement: 'METRO TRANSIT AUTH' },
+      { name: 'City Parking', statement: 'CITY PARKING GARAGE' },
+      { name: 'Fuel Stop', statement: 'FUEL STOP #321' },
+      { name: 'Rideshare Co', statement: 'RIDESHARE CO' },
+      { name: 'Auto Service', statement: 'AUTO SERVICE CTR' },
+    ],
+    Entertainment: [
+      { name: 'Cinema Plus', statement: 'CINEMA PLUS #55' },
+      { name: 'Streaming Service', statement: 'STREAMING SVC' },
+      { name: 'Concert Hall', statement: 'CONCERT HALL TIX' },
+      { name: 'Bowling Alley', statement: 'BOWLING ALLEY' },
+      { name: 'Game Store', statement: 'GAME STORE #12' },
+    ],
+    Utilities: [
+      { name: 'Electric Company', statement: 'ELECTRIC CO UTIL' },
+      { name: 'Water Services', statement: 'WATER SERVICES' },
+      { name: 'Internet Provider', statement: 'INTERNET PROV LLC' },
+      { name: 'Gas Utility', statement: 'GAS UTILITY CO' },
+      { name: 'Phone Service', statement: 'PHONE SVC #999' },
+    ],
+    Shopping: [
+      { name: 'Department Store', statement: 'DEPT STORE #100' },
+      { name: 'Electronics Hub', statement: 'ELECTRONICS HUB' },
+      { name: 'Fashion Outlet', statement: 'FASHION OUTLET' },
+      { name: 'Home Goods', statement: 'HOME GOODS STORE' },
+      { name: 'Book Emporium', statement: 'BOOK EMPORIUM' },
+    ],
+    Healthcare: [
+      { name: 'City Pharmacy', statement: 'CITY PHARMACY #77' },
+      { name: 'Medical Clinic', statement: 'MEDICAL CLINIC' },
+      { name: 'Vision Center', statement: 'VISION CENTER' },
+      { name: 'Dental Office', statement: 'DENTAL OFFICE LLC' },
+      { name: 'Health Mart', statement: 'HEALTH MART #33' },
+    ],
+    Travel: [
+      { name: 'Airline Express', statement: 'AIRLINE EXPRESS' },
+      { name: 'Hotel Suites', statement: 'HOTEL SUITES INC' },
+      { name: 'Car Rental Co', statement: 'CAR RENTAL CO' },
+      { name: 'Travel Agency', statement: 'TRAVEL AGENCY LLC' },
+      { name: 'Resort Stay', statement: 'RESORT STAY #88' },
+    ],
+  };
+
+  // Amount ranges by category
+  const amountRanges: { [cat: string]: [number, number] } = {
+    Groceries: [25, 150],
+    Restaurants: [15, 80],
+    Transportation: [10, 60],
+    Entertainment: [12, 50],
+    Utilities: [40, 200],
+    Shopping: [20, 200],
+    Healthcare: [15, 100],
+    Travel: [100, 500],
+  };
+
+  // Seeded random for reproducibility
+  let seed = 12345;
+  const random = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const randomInt = (min: number, max: number) => Math.floor(random() * (max - min + 1)) + min;
+  const randomChoice = <T,>(arr: T[]): T => arr[Math.floor(random() * arr.length)]!;
+
+  const lines: string[] = [];
+  lines.push('Date\tMerchant\tCategory\tAccount\tOriginal Statement\tNotes\tAmount\tTags\tOwner\tFixedCategory\tMonth');
+
+  for (let month = 1; month <= 12; month++) {
+    for (const category of categories) {
+      const transactionCount = randomInt(3, 6);
+      const merchantList = merchants[category] ?? [];
+      const [minAmount, maxAmount] = amountRanges[category] ?? [20, 100];
+
+      for (let t = 0; t < transactionCount; t++) {
+        const day = randomInt(1, 28);
+        const date = `2025-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const merchant = randomChoice(merchantList);
+        const account = randomChoice(accounts);
+        const owner = randomChoice(owners);
+        const amount = -(randomInt(minAmount * 100, maxAmount * 100) / 100);
+        const monthStr = `2025-${String(month).padStart(2, '0')}`;
+
+        lines.push(`${date}\t${merchant.name}\t${category}\t${account}\t${merchant.statement}\t\t${amount.toFixed(2)}\t\t${owner}\t${category}\t${monthStr}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function parseTSV(tsv: string): Transaction[] {
   const lines = tsv.trim().split('\n');
   if (lines.length < 2) return [];
 
+  // Parse header to detect column mapping
+  const headerLine = lines[0];
+  if (!headerLine) return [];
+  const headers = headerLine.split('\t');
+  const mapping = detectColumnMapping(headers);
+
+  // First pass: collect raw amounts to detect sign convention
+  const rawAmounts: number[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line?.trim()) continue;
+    const cols = line.split('\t');
+    if (mapping.amount >= 0) {
+      const rawAmount = parseFloat(cols[mapping.amount] ?? '0') || 0;
+      if (rawAmount !== 0) rawAmounts.push(rawAmount);
+    }
+  }
+
+  const invertSign = detectSignConvention(rawAmounts);
+
+  // Second pass: parse transactions
   const transactions: Transaction[] = [];
 
   for (let i = 1; i < lines.length; i++) {
@@ -44,20 +295,22 @@ function parseTSV(tsv: string): Transaction[] {
     if (!line?.trim()) continue;
 
     const cols = line.split('\t');
-    const rawAmount = parseFloat(cols[6] ?? '0') || 0;
-    const amount = -rawAmount; // Invert sign: treat negative as positive and vice versa
+    const getCol = (idx: number) => (idx >= 0 ? cols[idx] ?? '' : '');
+
+    const rawAmount = parseFloat(getCol(mapping.amount)) || 0;
+    const amount = invertSign ? -rawAmount : rawAmount;
 
     transactions.push({
-      date: cols[0] ?? '',
-      merchant: cols[1] ?? '',
-      category: cols[2] ?? '',
-      account: cols[3] ?? '',
-      originalStatement: cols[4] ?? '',
-      notes: cols[5] ?? '',
+      date: getCol(mapping.date),
+      merchant: getCol(mapping.merchant),
+      category: getCol(mapping.category),
+      account: getCol(mapping.account),
+      originalStatement: getCol(mapping.originalStatement),
+      notes: getCol(mapping.notes),
       amount,
-      tags: cols[7] ?? '',
-      owner: cols[8] ?? '',
-      fixedCategory: cols[9] ?? '',
+      tags: getCol(mapping.tags),
+      owner: getCol(mapping.owner),
+      fixedCategory: getCol(mapping.fixedCategory),
     });
   }
 
@@ -65,11 +318,9 @@ function parseTSV(tsv: string): Transaction[] {
 }
 
 function getYearMonth(dateStr: string): { year: number; month: number } | null {
-  const parts = dateStr.split('-');
-  const year = parseInt(parts[0] ?? '0', 10);
-  const month = parseInt(parts[1] ?? '0', 10);
-  if (isNaN(year) || isNaN(month)) return null;
-  return { year, month };
+  const parsed = parseDateString(dateStr);
+  if (!parsed) return null;
+  return { year: parsed.year, month: parsed.month };
 }
 
 function getAvailableYears(transactions: Transaction[]): number[] {
@@ -138,17 +389,20 @@ function App() {
   const [sortColumn, setSortColumn] = useState<SortColumn>('amount');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount, or use synthetic data if empty
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      setTsvData(saved);
-      const parsed = parseTSV(saved);
-      setTransactions(parsed);
-      const years = getAvailableYears(parsed);
-      if (years[0] !== undefined) {
-        setSelectedYear(years[0]);
-      }
+    const dataToUse = saved || generateSyntheticData();
+    
+    setTsvData(dataToUse);
+    if (!saved) {
+      localStorage.setItem(STORAGE_KEY, dataToUse);
+    }
+    const parsed = parseTSV(dataToUse);
+    setTransactions(parsed);
+    const years = getAvailableYears(parsed);
+    if (years[0] !== undefined) {
+      setSelectedYear(years[0]);
     }
   }, []);
 
