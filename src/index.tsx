@@ -237,20 +237,16 @@ function App() {
           {selectedYear !== null && categories.length > 0 && (() => {
             // Calculate column totals
             const monthlyTotals: { [month: number]: number } = {};
-            let grandTotal = 0;
-            let totalMean = 0;
-            let totalMedian = 0;
 
             for (const category of categories) {
               const monthlyData = pivot[category] ?? {};
-              const stats = calculateStats(monthlyData);
-              grandTotal += stats.total;
-              totalMean += stats.mean;
-              totalMedian += stats.median;
               for (let month = 1; month <= 12; month++) {
                 monthlyTotals[month] = (monthlyTotals[month] ?? 0) + (monthlyData[month] ?? 0);
               }
             }
+
+            // Calculate proper stats from the monthly totals
+            const totalStats = calculateStats(monthlyTotals);
 
             return (
               <table class="pivot-table">
@@ -303,9 +299,9 @@ function App() {
                         </td>
                       );
                     })}
-                    <td><strong>{formatCurrency(grandTotal)}</strong></td>
-                    <td><strong>{formatCurrency(totalMean)}</strong></td>
-                    <td><strong>{formatCurrency(totalMedian)}</strong></td>
+                    <td><strong>{formatCurrency(totalStats.total)}</strong></td>
+                    <td><strong>{formatCurrency(totalStats.mean)}</strong></td>
+                    <td><strong>{formatCurrency(totalStats.median)}</strong></td>
                   </tr>
                 </tbody>
               </table>
