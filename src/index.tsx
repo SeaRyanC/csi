@@ -111,10 +111,12 @@ function detectColumnMapping(headers: string[]): ColumnMapping {
 }
 
 // Parse a date string in various formats to extract year and month
+// Note: For ambiguous dates like '12/11/2025', MM/DD/YYYY is preferred (US convention)
+// European DD/MM/YYYY is only used when the first number > 12 (unambiguously a day)
 function parseDateString(dateStr: string): { year: number; month: number; day: number } | null {
   const trimmed = dateStr.trim();
   
-  // Try YYYY-MM-DD or YYYY/MM/DD
+  // Try YYYY-MM-DD or YYYY/MM/DD (ISO format)
   let match = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (match) {
     return {
@@ -136,7 +138,7 @@ function parseDateString(dateStr: string): { year: number; month: number; day: n
     if (first > 12 && second <= 12) {
       return { year, month: second, day: first };
     }
-    // Otherwise assume MM/DD/YYYY
+    // Otherwise assume MM/DD/YYYY (or MM/DD/YYYY for ambiguous cases)
     return { year, month: first, day: second };
   }
 
@@ -144,6 +146,7 @@ function parseDateString(dateStr: string): { year: number; month: number; day: n
 }
 
 // Detect sign convention: returns true if negative numbers should be inverted to positive (expenses)
+// If equal counts or empty, returns false (no inversion) - amounts are kept as-is
 function detectSignConvention(amounts: number[]): boolean {
   const negativeCount = amounts.filter(a => a < 0).length;
   const positiveCount = amounts.filter(a => a > 0).length;
