@@ -234,49 +234,79 @@ function App() {
             ))}
           </div>
 
-          {selectedYear !== null && categories.length > 0 && (
-            <table class="pivot-table">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  {MONTHS.map(m => (
-                    <th key={m}>{m}</th>
-                  ))}
-                  <th>Total</th>
-                  <th>Mean</th>
-                  <th>Median</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categories.map(category => {
-                  const monthlyData = pivot[category] ?? {};
-                  const stats = calculateStats(monthlyData);
-                  return (
-                    <tr key={category}>
-                      <td>{category}</td>
-                      {MONTHS.map((_, idx) => {
-                        const month = idx + 1;
-                        const value = monthlyData[month] ?? 0;
-                        const isSelected = selectedCell?.category === category && selectedCell?.month === month;
-                        return (
-                          <td
-                            key={month}
-                            class={`clickable ${isSelected ? 'selected' : ''}`}
-                            onClick={() => handleCellClick(category, month)}
-                          >
-                            {value !== 0 ? formatCurrency(value) : ''}
-                          </td>
-                        );
-                      })}
-                      <td>{formatCurrency(stats.total)}</td>
-                      <td>{formatCurrency(stats.mean)}</td>
-                      <td>{formatCurrency(stats.median)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          {selectedYear !== null && categories.length > 0 && (() => {
+            // Calculate column totals
+            const monthlyTotals: { [month: number]: number } = {};
+
+            for (const category of categories) {
+              const monthlyData = pivot[category] ?? {};
+              for (let month = 1; month <= 12; month++) {
+                monthlyTotals[month] = (monthlyTotals[month] ?? 0) + (monthlyData[month] ?? 0);
+              }
+            }
+
+            // Calculate proper stats from the monthly totals
+            const totalStats = calculateStats(monthlyTotals);
+
+            return (
+              <table class="pivot-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    {MONTHS.map(m => (
+                      <th key={m}>{m}</th>
+                    ))}
+                    <th>Total</th>
+                    <th>Mean</th>
+                    <th>Median</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categories.map(category => {
+                    const monthlyData = pivot[category] ?? {};
+                    const stats = calculateStats(monthlyData);
+                    return (
+                      <tr key={category}>
+                        <td>{category}</td>
+                        {MONTHS.map((_, idx) => {
+                          const month = idx + 1;
+                          const value = monthlyData[month] ?? 0;
+                          const isSelected = selectedCell?.category === category && selectedCell?.month === month;
+                          return (
+                            <td
+                              key={month}
+                              class={`clickable ${isSelected ? 'selected' : ''}`}
+                              onClick={() => handleCellClick(category, month)}
+                            >
+                              {value !== 0 ? formatCurrency(value) : ''}
+                            </td>
+                          );
+                        })}
+                        <td>{formatCurrency(stats.total)}</td>
+                        <td>{formatCurrency(stats.mean)}</td>
+                        <td>{formatCurrency(stats.median)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr class="total-row">
+                    <td><strong>Total</strong></td>
+                    {MONTHS.map((_, idx) => {
+                      const month = idx + 1;
+                      const value = monthlyTotals[month] ?? 0;
+                      return (
+                        <td key={month}>
+                          {value !== 0 ? formatCurrency(value) : ''}
+                        </td>
+                      );
+                    })}
+                    <td><strong>{formatCurrency(totalStats.total)}</strong></td>
+                    <td><strong>{formatCurrency(totalStats.mean)}</strong></td>
+                    <td><strong>{formatCurrency(totalStats.median)}</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            );
+          })()}
 
           {selectedCell && selectedTransactions.length > 0 && (
             <div class="transactions">
